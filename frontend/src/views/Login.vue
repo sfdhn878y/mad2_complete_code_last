@@ -21,6 +21,7 @@ export default {
   methods: {
     async login() {
       try {
+        console.log('try blcock hit`')
         const response = await fetch("http://127.0.0.1:5000/login", {
           method: "POST",
           headers: {
@@ -31,10 +32,15 @@ export default {
             password: this.password
           })
         });
-
-        const data = await response.json();
-        this.message = data.message;
+        if (response.ok) {
+          this.message = "Login successful!";
+        } else {
+          const data = await response.json();
+          this.message = data.error || "Login failed";
+        }
+       
       } catch (error) {
+      console.log('catch block hit')
         console.error("Error:", error);
         this.message = "Server error";
       }
