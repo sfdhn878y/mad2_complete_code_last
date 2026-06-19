@@ -109,14 +109,19 @@ def login():
         email = data.get("email")
         password = data.get("password")
 
+        
         user = User.query.filter_by(email=email).first()
         if user and user.password == password:
-            return jsonify({"message": "Login ho gya hai "}), 200
+            return jsonify({"role": user.role}), 200
         else:
             return jsonify({"error": "Invalid credentials"}), 401
 
 
 if __name__ == "__main__":
     with app.app_context():
-        db.create_all()
+        db.create_all() 
+        if not User.query.filter_by(username="admin").first():
+            new_user = User(username="admin", email="admin", password="admin", role="admin")
+            db.session.add(new_user)
+            db.session.commit()
     app.run(debug=True)

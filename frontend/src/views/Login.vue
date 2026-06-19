@@ -33,7 +33,18 @@ export default {
           })
         });
         if (response.ok) {
-          this.message = "Login successful!";
+          response.json().then(data => {
+          
+            if (data.role === "admin") {
+              this.$router.push("/admin");
+            } else if (data.role === "user") {
+              this.$router.push("/user");
+            } else if (data.role === "coordinator") {
+              this.$router.push("/coordinator");
+            } else {
+              this.message = "Unknown role";
+            }
+          });
         } else {
           const data = await response.json();
           this.message = data.error || "Login failed";
