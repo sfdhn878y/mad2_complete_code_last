@@ -117,6 +117,34 @@ def login():
             return jsonify({"error": "Invalid credentials"}), 401
 
 
+@app.route("/add_treks", methods=["POST"])
+def add_treks():
+    if request.method == "POST":
+        data = request.get_json()
+        name = data.get("name")
+        location = data.get("location")
+        slots = data.get("slots")
+        duration = data.get("duration")
+        coordinator_id = data.get("coordinator_id")
+        print(coordinator_id)
+
+        new_trek = treaking_table(
+            name=name,
+            location=location,
+            slots=slots,
+            duration=duration,
+            coordinator_id=coordinator_id
+        )
+        db.session.add(new_trek)
+        db.session.commit()
+    return jsonify({"message": "Trek added successfully"}), 201
+
+@app.route('/all_coordinators', methods=['GET'])
+def all_coordinators():
+    coordinators = User.query.filter_by(role='coordinator').all()
+    print(coordinators)
+    return jsonify([{'id': user.id, 'username': user.username} for user in coordinators])
+
 if __name__ == "__main__":
     with app.app_context():
         db.create_all() 
