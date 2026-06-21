@@ -145,6 +145,20 @@ def all_coordinators():
     print(coordinators)
     return jsonify([{'id': user.id, 'username': user.username} for user in coordinators])
 
+
+@app.route("/all_treks", methods=["GET"])
+def all_treks():
+    treks = treaking_table.query.all()
+    return jsonify([{
+        'id': trek.id,
+        'name': trek.name,
+        'location': trek.location,
+        'slots': trek.slots,
+        'status': trek.status,
+        'duration': trek.duration,
+        'coordinator_id': trek.coordinator_id
+    } for trek in treks])
+
 if __name__ == "__main__":
     with app.app_context():
         db.create_all() 
