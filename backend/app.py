@@ -24,6 +24,7 @@ class User(db.Model):
     verified = db.Column(db.Boolean, default=False)
 
 
+
 class treaking_table(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100))
@@ -75,6 +76,10 @@ class booking(db.Model):
         backref='bookings'
     )
 
+
+@app.route("/")
+def index():
+    return jsonify({"message": "Welcome to the Trekking API"}), 200
 
 
 @app.route("/register", methods=["POST"])
@@ -149,6 +154,7 @@ def all_coordinators():
 @app.route("/all_treks", methods=["GET"])
 def all_treks():
     treks = treaking_table.query.all()
+
     return jsonify([{
         'id': trek.id,
         'name': trek.name,
@@ -156,7 +162,7 @@ def all_treks():
         'slots': trek.slots,
         'status': trek.status,
         'duration': trek.duration,
-        'coordinator_id': trek.coordinator_id
+        "coordinator_name": trek.coordinator.username if trek.coordinator else None
     } for trek in treks])
 
 if __name__ == "__main__":

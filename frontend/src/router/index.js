@@ -5,7 +5,7 @@ import { createRouter, createWebHistory } from "vue-router"
 
 const routes = [
    {
-        path: "/Home",
+        path: "/",
         component: () => import("../views/Home.vue")
     },
     {
@@ -27,6 +27,10 @@ const routes = [
     {
         path: "/Admin",
         component: () => import("../views/Admin.vue")
+    },
+    {
+        path:'/trek_managment',
+        component:()=>import('../views/TrekMangment.vue')
     }
 
 ]
