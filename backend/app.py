@@ -21,7 +21,8 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password = db.Column(db.String(60), nullable=False)
     role = db.Column(db.String(20), nullable=False)
-    verified = db.Column(db.Boolean, default=False)
+    # verified = db.Column(db.Boolean, default=False)
+    status = db.Column(db.String(20), default="Active")
 
 
 
@@ -144,6 +145,51 @@ def add_treks():
         db.session.commit()
     return jsonify({"message": "Trek added successfully"}), 201
 
+# Get all staff
+@app.route("/staff", methods=["GET"])
+def get_staff():
+    staff = User.query.filter_by(role="coordinator").all()
+
+    data = []
+
+    for s in staff:
+        print(s)
+        data.append({
+            "id": s.id,
+            "username": s.username,
+            "email": s.email,
+            "status": s.status
+        })
+
+    return jsonify(data), 200
+
+@app.route("/staff/status", methods=["POST"])
+def update_staff_status():
+    data = request.get_json()
+
+    staff = User.query.get(data["id"])
+
+    if not staff:
+        return jsonify({"error": "Staff not found"}), 404
+
+    staff.status = data["status"]
+    db.session.commit()
+
+    return jsonify({"message": "Status updated successfully"})
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @app.route('/all_coordinators', methods=['GET'])
 def all_coordinators():
     coordinators = User.query.filter_by(role='coordinator').all()
@@ -196,7 +242,16 @@ def all_staff():
         'username': staff.username,
         'email': staff.email
     } for staff in staff_members])
-
+@app.route("/all_users", methods=["GET"])
+def all_users():
+    users = User.query.filter_by(role='user').all()
+    return jsonify([{
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+        'status': user.status,
+      
+    } for user in users])
 
 if __name__ == "__main__":
     with app.app_context():
