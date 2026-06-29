@@ -165,6 +165,39 @@ def all_treks():
         "coordinator_name": trek.coordinator.username if trek.coordinator else None
     } for trek in treks])
 
+
+@app.route("/add_staff", methods=["POST"])
+def add_staff():    
+    if request.method == "POST":
+        data = request.get_json()
+        username = data.get("username")
+        email = data.get("email")
+        password = data.get("password")
+        role = 'coordinator'
+
+        if User.query.filter_by(email=email).first():
+            return jsonify({"error": "Username alresdfsdfsdfsdfdsfsady exists"}), 400
+        new_user = User(
+            username=username,
+            email=email,
+            password=password,
+            role=role
+        )
+        db.session.add(new_user)
+        db.session.commit()
+    return jsonify({"message": "Staff added successfully"}), 201
+
+
+@app.route("/all_staff", methods=["GET"])
+def all_staff():
+    staff_members = User.query.filter_by(role='coordinator').all()
+    return jsonify([{
+        'id': staff.id,
+        'username': staff.username,
+        'email': staff.email
+    } for staff in staff_members])
+
+
 if __name__ == "__main__":
     with app.app_context():
         db.create_all() 
