@@ -31,8 +31,18 @@ const routes = [
     {
         path:'/trek_managment',
         component:()=>import('../views/TrekMangment.vue')
-    }
-
+    },
+     {
+        path:'/add_staff',
+        component:()=>import('../views/AddStaff.vue')
+    },
+   { path : '/staff_managment',
+    component : () => import('../views/StaffMangment.vue')
+},
+{
+    path:'/user_managment',
+    component:()=>import('../views/UserMangment.vue')
+}
 ]
 
 const router = createRouter({

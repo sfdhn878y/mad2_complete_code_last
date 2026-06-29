@@ -8,6 +8,7 @@
             {{ trek.name }} - {{ trek.location }}
         </li>
     </ul>
+    <button @click="add_staff">Add Staff</button>
 </template>
 
 <script>
@@ -21,6 +22,10 @@ export default {
         this.all_treaks();
     },
     methods: {
+        add_staff(){
+            this.$router.push("/add_staff");
+        },
+
         add_treak() {
             this.$router.push("/add_trek");
         },
