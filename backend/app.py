@@ -43,7 +43,10 @@ class treaking_table(db.Model):
         db.Integer,
         db.ForeignKey('user.id')
     )
-
+# open : users can book trek , upcomming : going 
+    trek_state = db.Column(db.String(50), default="Upcoming") # uplcing : opne , ogiong : closed , completed: closed
+    trek_status = db.Column(db.String(50), default="Open") # close
+    
     # All bookings for this trek
     bookings = db.relationship(
         'booking',
@@ -219,11 +222,23 @@ def all_treks():
         'name': trek.name,
         'location': trek.location,
         'slots': trek.slots,
-        'status': trek.status,
+        'trek_status': trek.trek_status,
+        'trek_state': trek.trek_state,
         'duration': trek.duration,
         "coordinator_name": trek.coordinator.username if trek.coordinator else None
     } for trek in treks])
 
+
+@app.route("/delete_trek/<int:trek_id>", methods=["DELETE"])
+def delete_trek(trek_id):
+    print('delte trek called')
+    trek = treaking_table.query.get(trek_id)
+    if not trek:
+        return jsonify({"error": "Trek not found"}), 404
+
+    db.session.delete(trek)
+    db.session.commit()
+    return jsonify({"message": "Trek deleted successfully"}), 200
 
 @app.route("/add_staff", methods=["POST"])
 def add_staff():    
