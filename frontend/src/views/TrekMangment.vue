@@ -1,4 +1,5 @@
 <template>
+  <Navbar />
   <div class="container">
     <h1>Manage Treks</h1>
 
@@ -40,7 +41,11 @@
   </div>
 </template>
 <script>
+import Navbar from "../components/Navbar.vue";
 export default {
+  components: {
+    Navbar
+  },
     data(){
         return {
             all_treks:[]

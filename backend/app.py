@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+from flask_jwt_extended import create_access_token
 
 app = Flask(__name__)
 
@@ -13,7 +14,10 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
 
+from flask_jwt_extended import JWTManager
 
+app.config["JWT_SECRET_KEY"] = "your-secret-key"   # Change this
+jwt = JWTManager(app)
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -118,7 +122,16 @@ def login():
         
         user = User.query.filter_by(email=email).first()
         if user and user.password == password:
-            return jsonify({"role": user.role}), 200
+            access_token = create_access_token(identity=user.id)
+            return jsonify({
+            "token": access_token,
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "role": user.role
+            }
+        }), 200
         else:
             return jsonify({"error": "Invalid credentials"}), 401
 

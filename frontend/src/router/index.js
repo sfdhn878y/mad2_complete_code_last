@@ -21,7 +21,7 @@ const routes = [
         component: () => import("../views/Coordinator.vue")
     },
     {
-        path: "/Add_trek",
+        path: "/AddTrek",
         component: () => import("../views/AddTrek.vue")
     },
     {

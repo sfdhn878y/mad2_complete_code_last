@@ -1,4 +1,5 @@
 <template>
+  <Navbar />
   <div>
     <h1>User Management</h1>
     <table v-if="all_users.length > 0">
@@ -30,7 +31,11 @@
 </template>
 
 <script>
+import Navbar from "../components/Navbar.vue";
 export default {
+  components: {
+    Navbar
+  },
     data() {
         return {
         all_users: [],

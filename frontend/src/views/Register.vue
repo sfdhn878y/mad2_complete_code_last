@@ -1,4 +1,5 @@
 <template>
+  <Navbar />
   <div>
     <h2>Register</h2>
   </div>
@@ -13,7 +14,13 @@
 </template>
 
 <script>
+import Navbar from "../components/Navbar.vue";
+import About from './About.vue';
 export default {
+  components: {
+    Navbar,
+    About
+  },
   data() {
     return {
       username: "",

@@ -1,4 +1,5 @@
 <template>
+  <Navbar />
   <div class="container">
     <h1>Staff Management</h1>
 
@@ -30,7 +31,11 @@
 </template>
 
 <script>
+import Navbar from "../components/Navbar.vue";
 export default {
+  components: {
+    Navbar
+  },
   data() {
     return {
       staffs: [],

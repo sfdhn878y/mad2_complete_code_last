@@ -1,4 +1,5 @@
 <template>
+  <Navbar />
   <div>
     <input v-model="email" placeholder="Email" />
     <input v-model="password" type="password" placeholder="Password" />
@@ -9,7 +10,12 @@
 </template>
 
 <script>
+import Navbar from "../components/Navbar.vue";
+
 export default {
+  components: {
+    Navbar
+  },
   data() {
     return {
       email: "",
@@ -32,30 +38,27 @@ export default {
             password: this.password
           })
         });
-        if (response.ok) {
-          response.json().then(data => {
-          
-            if (data.role === "admin") {
-              this.$router.push("/admin");
-            } else if (data.role === "user") {
-              this.$router.push("/user");
-            } else if (data.role === "coordinator") {
-              this.$router.push("/coordinator");
-            } else {
-              this.message = "Unknown role";
-            }
-          });
-        } else {
-          const data = await response.json();
-          this.message = data.error || "Login failed";
-        }
-       
-      } catch (error) {
-      console.log('catch block hit')
-        console.error("Error:", error);
-        this.message = "Server error";
+    const data = await response.json();
+
+    if (response.ok) {
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("user", JSON.stringify(data.user));
+
+      if (data.user.role === "admin") {
+        this.$router.push("/admin");
+      } else if (data.user.role === "user") {
+        this.$router.push("/user");
+      } else if (data.user.role === "coordinator") {
+        this.$router.push("/coordinator");
       }
+    } else {
+      this.message = data.error;
     }
+  } catch (error) {
+    console.error(error);
+    this.message = "Server error";
+  }
+}
   }
 };
 </script>

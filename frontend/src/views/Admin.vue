@@ -1,4 +1,5 @@
 <template>
+    <Navbar />
     <div>
         <h1>Admin Dashboard</h1>
     </div>
@@ -12,7 +13,12 @@
 </template>
 
 <script>
+import Navbar from "../components/Navbar.vue";
+
 export default {
+      components: {
+    Navbar,
+  },
     data() {
         return {
             data:[]
