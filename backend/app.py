@@ -1,8 +1,12 @@
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-from flask_jwt_extended import create_access_token, JWTManager
+from flask_jwt_extended import (
+    create_access_token, JWTManager, jwt_required, get_jwt_identity,
+)
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, date
+from functools import wraps
 import json
 from sqlalchemy import text
 
@@ -22,13 +26,58 @@ jwt = JWTManager(app)
 
 
 # ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
+def hash_password(raw):
+    return generate_password_hash(raw)
+
+
+def verify_password(user, raw):
+    """Check a password, transparently migrating legacy plaintext values."""
+    stored = user.password or ""
+    if not stored.startswith(("pbkdf2:", "scrypt:")):
+        # legacy plaintext record: verify then upgrade to a hash
+        if stored == raw:
+            user.password = generate_password_hash(raw)
+            db.session.commit()
+            return True
+        return False
+    return check_password_hash(stored, raw)
+
+
+def current_user():
+    identity = get_jwt_identity()
+    if identity is None:
+        return None
+    return User.query.get(int(identity))
+
+
+def role_required(*roles):
+    """Require a valid JWT and (optionally) one of the given roles."""
+    def wrapper(fn):
+        @wraps(fn)
+        @jwt_required()
+        def decorated(*args, **kwargs):
+            user = current_user()
+            if not user:
+                return jsonify({"error": "Unauthorized"}), 401
+            if user.status == "Blacklisted":
+                return jsonify({"error": "Your account has been blacklisted"}), 403
+            if roles and user.role not in roles:
+                return jsonify({"error": "Forbidden: insufficient permissions"}), 403
+            return fn(*args, **kwargs)
+        return decorated
+    return wrapper
+
+
+# ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(20), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
-    password = db.Column(db.String(60), nullable=False)
+    password = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False)  # user | staff | admin
 
     # user  -> Active | Blacklisted
@@ -182,7 +231,7 @@ def register():
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "Email already exists"}), 400
 
-    new_user = User(username=username, email=email, password=password,
+    new_user = User(username=username, email=email, password=hash_password(password),
                     role="user", status="Active")
     db.session.add(new_user)
     db.session.commit()
@@ -196,7 +245,7 @@ def login():
     password = data.get("password")
 
     user = User.query.filter_by(email=email).first()
-    if not user or user.password != password:
+    if not user or not verify_password(user, password):
         return jsonify({"error": "Invalid credentials"}), 401
 
     if user.status == "Blacklisted":
@@ -221,6 +270,7 @@ def login():
 # Admin: stats
 # ---------------------------------------------------------------------------
 @app.route("/stats", methods=["GET"])
+@role_required("admin")
 def stats():
     return jsonify({
         "total_treks": treaking_table.query.count(),
@@ -234,12 +284,14 @@ def stats():
 # Admin: treks
 # ---------------------------------------------------------------------------
 @app.route("/all_treks", methods=["GET"])
+@role_required("admin")
 def all_treks():
     treks = treaking_table.query.all()
     return jsonify([serialize_trek(t) for t in treks])
 
 
 @app.route("/admin/trek_details/<int:trek_id>", methods=["GET"])
+@role_required("admin")
 def trek_details(trek_id):
     trek = treaking_table.query.get(trek_id)
     if not trek:
@@ -257,6 +309,7 @@ def trek_details(trek_id):
 
 
 @app.route("/add_treks", methods=["POST"])
+@role_required("admin")
 def add_treks():
     data = request.get_json()
     name = data.get("name")
@@ -290,6 +343,7 @@ def add_treks():
 
 
 @app.route("/admin/edit_trek/<int:trek_id>", methods=["PUT"])
+@role_required("admin")
 def edit_trek(trek_id):
     trek = treaking_table.query.get(trek_id)
     if not trek:
@@ -319,6 +373,7 @@ def edit_trek(trek_id):
 
 
 @app.route("/delete_trek/<int:trek_id>", methods=["DELETE"])
+@role_required("admin")
 def delete_trek(trek_id):
     trek = treaking_table.query.get(trek_id)
     if not trek:
@@ -329,6 +384,7 @@ def delete_trek(trek_id):
 
 
 @app.route("/admin/toggle_booking/<int:trek_id>", methods=["POST"])
+@role_required("admin")
 def toggle_booking(trek_id):
     trek = treaking_table.query.get(trek_id)
     if not trek:
@@ -339,6 +395,7 @@ def toggle_booking(trek_id):
 
 
 @app.route("/admin/approve_change/<int:trek_id>", methods=["POST"])
+@role_required("admin")
 def approve_change(trek_id):
     trek = treaking_table.query.get(trek_id)
     if not trek:
@@ -372,6 +429,7 @@ def approve_change(trek_id):
 
 
 @app.route("/admin/reject_change/<int:trek_id>", methods=["POST"])
+@role_required("admin")
 def reject_change(trek_id):
     trek = treaking_table.query.get(trek_id)
     if not trek:
@@ -384,6 +442,7 @@ def reject_change(trek_id):
 
 
 @app.route("/assign_staff", methods=["POST"])
+@role_required("admin")
 def assign_staff():
     data = request.get_json()
     trek = treaking_table.query.get(data["trek_id"])
@@ -395,10 +454,14 @@ def assign_staff():
 
 
 @app.route("/view_participants/<int:trek_id>", methods=["GET"])
+@role_required("admin", "staff")
 def view_participants(trek_id):
     trek = treaking_table.query.get(trek_id)
     if not trek:
         return jsonify({"error": "Trek not found"}), 404
+    user = current_user()
+    if user.role == "staff" and trek.coordinator_id != user.id:
+        return jsonify({"error": "Not authorized for this trek"}), 403
     return jsonify({
         "trek_name": trek.name,
         "participants": [{
@@ -417,6 +480,7 @@ def view_participants(trek_id):
 # Admin: staff management
 # ---------------------------------------------------------------------------
 @app.route("/all_staff", methods=["GET"])
+@role_required("admin")
 def all_staff():
     staff_members = User.query.filter_by(role="staff").all()
     return jsonify([{
@@ -429,12 +493,14 @@ def all_staff():
 
 # dropdown of staff for assignment (kept for backward compatibility)
 @app.route("/all_coordinators", methods=["GET"])
+@role_required("admin")
 def all_coordinators():
     coordinators = User.query.filter_by(role="staff").all()
     return jsonify([{"id": u.id, "username": u.username} for u in coordinators])
 
 
 @app.route("/add_staff", methods=["POST"])
+@role_required("admin")
 def add_staff():
     data = request.get_json()
     username = data.get("username")
@@ -444,7 +510,7 @@ def add_staff():
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "Email already exists"}), 400
 
-    new_user = User(username=username, email=email, password=password,
+    new_user = User(username=username, email=email, password=hash_password(password),
                     role="staff", status="Approved")
     db.session.add(new_user)
     db.session.commit()
@@ -452,6 +518,7 @@ def add_staff():
 
 
 @app.route("/staff/status", methods=["POST"])
+@role_required("admin")
 def update_staff_status():
     data = request.get_json()
     staff = User.query.get(data["id"])
@@ -463,6 +530,7 @@ def update_staff_status():
 
 
 @app.route("/staff/remove/<int:staff_id>", methods=["DELETE"])
+@role_required("admin")
 def remove_staff(staff_id):
     staff = User.query.filter_by(id=staff_id, role="staff").first()
     if not staff:
@@ -476,6 +544,7 @@ def remove_staff(staff_id):
 
 
 @app.route("/staff_profile/<int:user_id>", methods=["GET"])
+@role_required("admin")
 def staff_profile(user_id):
     user = User.query.filter_by(id=user_id, role="staff").first()
     if not user:
@@ -501,6 +570,7 @@ def staff_profile(user_id):
 # Admin: user management
 # ---------------------------------------------------------------------------
 @app.route("/all_users", methods=["GET"])
+@role_required("admin")
 def all_users():
     users = User.query.filter_by(role="user").all()
     return jsonify([{
@@ -513,6 +583,7 @@ def all_users():
 
 
 @app.route("/user/status", methods=["POST"])
+@role_required("admin")
 def update_user_status():
     data = request.get_json()
     user = User.query.get(data["id"])
@@ -524,6 +595,7 @@ def update_user_status():
 
 
 @app.route("/admin/user_profile/<int:user_id>", methods=["GET"])
+@role_required("admin")
 def admin_user_profile(user_id):
     user = User.query.get(user_id)
     if not user:
@@ -544,6 +616,7 @@ def admin_user_profile(user_id):
 # Admin: bookings
 # ---------------------------------------------------------------------------
 @app.route("/all_bookings", methods=["GET"])
+@role_required("admin")
 def all_bookings():
     bookings = booking.query.all()
     return jsonify([{
@@ -573,7 +646,10 @@ def progress_percent(trek):
 
 
 @app.route("/staff/overview/<int:user_id>", methods=["GET"])
+@role_required("staff")
 def staff_overview(user_id):
+    if current_user().id != user_id:
+        return jsonify({"error": "You can only view your own dashboard"}), 403
     user = User.query.filter_by(id=user_id, role="staff").first()
     if not user:
         return jsonify({"error": "Staff not found"}), 404
@@ -609,10 +685,13 @@ def staff_overview(user_id):
 
 
 @app.route("/staff/trek/<int:trek_id>", methods=["GET"])
+@role_required("staff")
 def staff_trek(trek_id):
     trek = treaking_table.query.get(trek_id)
     if not trek:
         return jsonify({"error": "Trek not found"}), 404
+    if trek.coordinator_id != current_user().id:
+        return jsonify({"error": "Not authorized for this trek"}), 403
     data = serialize_trek(trek)
     data["progress"] = progress_percent(trek)
     data["available_slots"] = trek.slots - len(active_bookings(trek))
@@ -620,12 +699,13 @@ def staff_trek(trek_id):
 
 
 @app.route("/staff/request_slot_change", methods=["POST"])
+@role_required("staff")
 def request_slot_change():
     data = request.get_json()
     trek = treaking_table.query.get(data["trek_id"])
     if not trek:
         return jsonify({"error": "Trek not found"}), 404
-    if trek.coordinator_id != data.get("coordinator_id"):
+    if trek.coordinator_id != current_user().id:
         return jsonify({"error": "Not authorized for this trek"}), 403
     if trek.pending_approval:
         return jsonify({"error": "A change is already pending approval"}), 400
@@ -642,12 +722,13 @@ def request_slot_change():
 
 
 @app.route("/staff/toggle_booking", methods=["POST"])
+@role_required("staff")
 def staff_toggle_booking():
     data = request.get_json()
     trek = treaking_table.query.get(data["trek_id"])
     if not trek:
         return jsonify({"error": "Trek not found"}), 404
-    if trek.coordinator_id != data.get("coordinator_id"):
+    if trek.coordinator_id != current_user().id:
         return jsonify({"error": "Not authorized for this trek"}), 403
     trek.trek_status = "Closed" if trek.trek_status == "Open" else "Open"
     db.session.commit()
@@ -655,12 +736,13 @@ def staff_toggle_booking():
 
 
 @app.route("/staff/update_state", methods=["POST"])
+@role_required("staff")
 def staff_update_state():
     data = request.get_json()
     trek = treaking_table.query.get(data["trek_id"])
     if not trek:
         return jsonify({"error": "Trek not found"}), 404
-    if trek.coordinator_id != data.get("coordinator_id"):
+    if trek.coordinator_id != current_user().id:
         return jsonify({"error": "Not authorized for this trek"}), 403
 
     new_state = data["trek_state"]
@@ -679,12 +761,13 @@ def staff_update_state():
 
 
 @app.route("/staff/edit_trek", methods=["POST"])
+@role_required("staff")
 def staff_edit_trek():
     data = request.get_json()
     trek = treaking_table.query.get(data["trek_id"])
     if not trek:
         return jsonify({"error": "Trek not found"}), 404
-    if trek.coordinator_id != data.get("coordinator_id"):
+    if trek.coordinator_id != current_user().id:
         return jsonify({"error": "Not authorized for this trek"}), 403
     if trek.pending_approval:
         return jsonify({"error": "A change is already pending approval"}), 400
@@ -712,7 +795,10 @@ def staff_edit_trek():
 # Profile (shared by staff + users)
 # ---------------------------------------------------------------------------
 @app.route("/profile/<int:user_id>", methods=["GET"])
+@role_required("user", "staff")
 def get_profile(user_id):
+    if current_user().id != user_id:
+        return jsonify({"error": "You can only view your own profile"}), 403
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "User not found"}), 404
@@ -737,7 +823,10 @@ def get_profile(user_id):
 
 
 @app.route("/profile/<int:user_id>", methods=["POST"])
+@role_required("user", "staff")
 def save_profile(user_id):
+    if current_user().id != user_id:
+        return jsonify({"error": "You can only edit your own profile"}), 403
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "User not found"}), 404
@@ -777,7 +866,10 @@ def serialize_booking(b):
 
 
 @app.route("/user/overview/<int:user_id>", methods=["GET"])
+@role_required("user")
 def user_overview(user_id):
+    if current_user().id != user_id:
+        return jsonify({"error": "You can only view your own dashboard"}), 403
     user = User.query.filter_by(id=user_id, role="user").first()
     if not user:
         return jsonify({"error": "User not found"}), 404
@@ -796,7 +888,10 @@ def user_overview(user_id):
 
 
 @app.route("/user/bookings/<int:user_id>", methods=["GET"])
+@role_required("user")
 def user_bookings(user_id):
+    if current_user().id != user_id:
+        return jsonify({"error": "You can only view your own bookings"}), 403
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "User not found"}), 404
@@ -804,7 +899,10 @@ def user_bookings(user_id):
 
 
 @app.route("/user/treks/<int:user_id>", methods=["GET"])
+@role_required("user")
 def user_treks(user_id):
+    if current_user().id != user_id:
+        return jsonify({"error": "You can only view your own treks"}), 403
     booked_ids = {
         b.treaking_table_id
         for b in booking.query.filter_by(user_id=user_id, status="Booked").all()
@@ -820,9 +918,10 @@ def user_treks(user_id):
 
 
 @app.route("/book_trek", methods=["POST"])
+@role_required("user")
 def book_trek():
     data = request.get_json()
-    user = User.query.get(data.get("user_id"))
+    user = current_user()
     trek = treaking_table.query.get(data.get("trek_id"))
     if not user or not trek:
         return jsonify({"error": "User or trek not found"}), 404
@@ -848,12 +947,13 @@ def book_trek():
 
 
 @app.route("/cancel_booking", methods=["POST"])
+@role_required("user")
 def cancel_booking():
     data = request.get_json()
     book = booking.query.get(data.get("booking_id"))
     if not book:
         return jsonify({"error": "Booking not found"}), 404
-    if book.user_id != data.get("user_id"):
+    if book.user_id != current_user().id:
         return jsonify({"error": "Not authorized"}), 403
     if book.status != "Booked":
         return jsonify({"error": "Only active bookings can be cancelled"}), 400
@@ -863,6 +963,7 @@ def cancel_booking():
 
 
 @app.route("/view_coordinator_profile/<int:user_id>", methods=["GET"])
+@role_required()
 def view_coordinator_profile(user_id):
     user = User.query.filter_by(id=user_id, role="staff").first()
     if not user:
@@ -889,7 +990,7 @@ if __name__ == "__main__":
         db.create_all()
         run_migrations()
         if not User.query.filter_by(username="admin").first():
-            admin = User(username="admin", email="admin", password="admin",
+            admin = User(username="admin", email="admin", password=hash_password("admin"),
                          role="admin", status="Active")
             db.session.add(admin)
             db.session.commit()
