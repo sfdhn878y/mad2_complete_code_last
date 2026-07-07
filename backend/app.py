@@ -85,6 +85,21 @@ class booking(db.Model):
     )
 
 
+class staff_profile(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey('user.id'),
+        nullable=False
+        , unique=True
+    )
+    # Additional fields for staff profile can be added here
+    contact_number = db.Column(db.String(15))
+    medication_certification = db.Column(db.String(100))
+    experience = db.Column(db.String(200))
+    user = db.relationship('User', backref=db.backref('staff_profile', uselist=False))
+
+
 @app.route("/")
 def index():
     return jsonify({"message": "Welcome to the Trekking API"}), 200
@@ -280,6 +295,160 @@ def all_users():
         'status': user.status,
       
     } for user in users])
+
+
+# staff dashbaord ----------------------------------
+@app.route("/staff_profie/<int:user_id>", methods=["GET"])
+def get_staff_profile(user_id):
+    #user , staff_profile
+    user = User.query.filter_by(id = user_id, role='coordinator').first()
+    print(user)
+    return jsonify({
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+        'status': user.status,
+        'contact_number': user.staff_profile.contact_number if user.staff_profile else None,
+        'medication_certification': user.staff_profile.medication_certification if user.staff_profile else None,
+        'experience': user.staff_profile.experience if user.staff_profile else None
+    }) 
+
+
+# treks assigned to a coordinator with registered trekkers count
+@app.route("/coordinator_treks/<int:user_id>", methods=["GET"])
+def coordinator_treks(user_id):
+    treks = treaking_table.query.filter_by(coordinator_id=user_id).all()
+    return jsonify([{
+        'id': trek.id,
+        'name': trek.name,
+        'location': trek.location,
+        'slots': trek.slots,
+        'duration': trek.duration,
+        'trek_status': trek.trek_status,
+        'trek_state': trek.trek_state,
+        'trekkers_count': len(trek.bookings)
+    } for trek in treks])
+
+
+# registered users for a single trek
+@app.route("/trek_participants/<int:trek_id>", methods=["GET"])
+def trek_participants(trek_id):
+    trek = treaking_table.query.get(trek_id)
+    if not trek:
+        return jsonify({"error": "Trek not found"}), 404
+
+    return jsonify([{
+        'booking_id': b.id,
+        'user_id': b.user.id,
+        'username': b.user.username,
+        'email': b.user.email
+    } for b in trek.bookings])
+
+
+# update available slots (only assigned coordinator can update)
+@app.route("/update_slots", methods=["POST"])
+def update_slots():
+    data = request.get_json()
+    trek = treaking_table.query.get(data["trek_id"])
+    if not trek:
+        return jsonify({"error": "Trek not found"}), 404
+
+    if trek.coordinator_id != data.get("coordinator_id"):
+        return jsonify({"error": "Not authorized for this trek"}), 403
+
+    trek.slots = data["slots"]
+    db.session.commit()
+    return jsonify({"message": "Slots updated successfully"})
+
+
+# update trek status Open / Closed
+@app.route("/update_trek_status", methods=["POST"])
+def update_trek_status():
+    data = request.get_json()
+    trek = treaking_table.query.get(data["trek_id"])
+    if not trek:
+        return jsonify({"error": "Trek not found"}), 404
+
+    if trek.coordinator_id != data.get("coordinator_id"):
+        return jsonify({"error": "Not authorized for this trek"}), 403
+
+    trek.trek_status = data["trek_status"]
+    db.session.commit()
+    return jsonify({"message": "Trek status updated successfully"})
+
+
+# mark trek started / ongoing / completed
+@app.route("/update_trek_state", methods=["POST"])
+def update_trek_state():
+    data = request.get_json()
+    trek = treaking_table.query.get(data["trek_id"])
+    if not trek:
+        return jsonify({"error": "Trek not found"}), 404
+
+    if trek.coordinator_id != data.get("coordinator_id"):
+        return jsonify({"error": "Not authorized for this trek"}), 403
+
+    trek.trek_state = data["trek_state"]
+    db.session.commit()
+    return jsonify({"message": "Trek state updated successfully"})
+
+
+# remove a participant from a trek (only assigned coordinator)
+@app.route("/remove_participant", methods=["POST"])
+def remove_participant():
+    data = request.get_json()
+    book = booking.query.get(data["booking_id"])
+    if not book:
+        return jsonify({"error": "Booking not found"}), 404
+
+    if book.trek.coordinator_id != data.get("coordinator_id"):
+        return jsonify({"error": "Not authorized for this trek"}), 403
+
+    db.session.delete(book)
+    db.session.commit()
+    return jsonify({"message": "Participant removed successfully"})
+
+
+# admin assigns a coordinator to a trek
+@app.route("/assign_staff", methods=["POST"])
+def assign_staff():
+    data = request.get_json()
+    trek = treaking_table.query.get(data["trek_id"])
+    if not trek:
+        return jsonify({"error": "Trek not found"}), 404
+
+    trek.coordinator_id = data["coordinator_id"]
+    db.session.commit()
+    return jsonify({"message": "Staff assigned successfully"})
+
+
+# admin: all booking records with user and trek info
+@app.route("/all_bookings", methods=["GET"])
+def all_bookings():
+    bookings = booking.query.all()
+    return jsonify([{
+        'id': b.id,
+        'username': b.user.username,
+        'email': b.user.email,
+        'trek_name': b.trek.name,
+        'trek_status': b.trek.trek_status,
+        'trek_state': b.trek.trek_state
+    } for b in bookings])
+
+
+# admin: trekking statistics and reports
+@app.route("/stats", methods=["GET"])
+def stats():
+    return jsonify({
+        'total_users': User.query.filter_by(role='user').count(),
+        'total_staff': User.query.filter_by(role='coordinator').count(),
+        'total_treks': treaking_table.query.count(),
+        'total_bookings': booking.query.count(),
+        'open_treks': treaking_table.query.filter_by(trek_status='Open').count(),
+        'closed_treks': treaking_table.query.filter_by(trek_status='Closed').count(),
+        'completed_treks': treaking_table.query.filter_by(trek_state='completed').count()
+    })
+
 
 if __name__ == "__main__":
     with app.app_context():

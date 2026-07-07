@@ -49,7 +49,7 @@ export default {
       } else if (data.user.role === "user") {
         this.$router.push("/user");
       } else if (data.user.role === "coordinator") {
-        this.$router.push("/coordinator");
+        this.$router.push("/staff_dashboard");
       }
     } else {
       this.message = data.error;

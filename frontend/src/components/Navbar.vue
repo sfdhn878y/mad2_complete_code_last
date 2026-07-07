@@ -2,11 +2,18 @@
     <nav>
       <router-link to="/">Home</router-link>
       <template v-if="logedIn()">
-              <router-link to="/user_managment">user_managment </router-link>
-      <router-link to="/staff_managment">staff_managment</router-link>
-      <router-link to="/trek_managment">trek_managment</router-link>
+        <template v-if="role() === 'admin'">
+          <router-link to="/user_managment">user_managment </router-link>
+          <router-link to="/staff_managment">staff_managment</router-link>
+          <router-link to="/trek_managment">trek_managment</router-link>
+          <router-link to="/bookings">bookings</router-link>
+          <router-link to="/statistics">statistics</router-link>
+        </template>
+        <template v-if="role() === 'coordinator'">
+          <router-link to="/staff_dashboard">staff_dashboard</router-link>
+        </template>
 
-              <button @click.prevent="logout">Logout</button>
+        <button @click.prevent="logout">Logout</button>
 
       </template>
       <template v-else>
@@ -28,7 +35,11 @@
       logedIn() {
       return !!window.localStorage.getItem("token");
       
-    }
+    },
+      role() {
+        const user = JSON.parse(window.localStorage.getItem("user"));
+        return user ? user.role : "";
+      }
     },
     
   };
