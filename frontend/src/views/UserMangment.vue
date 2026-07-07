@@ -2,7 +2,8 @@
   <Navbar />
   <div>
     <h1>User Management</h1>
-    <table v-if="all_users.length > 0">
+    <input v-model="search" placeholder="Search user by name or ID" />
+    <table v-if="filtered_users.length > 0">
       <thead>
         <tr>
           <th>ID</th>
@@ -12,7 +13,7 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="user in all_users" :key="user.id">
+        <tr v-for="user in filtered_users" :key="user.id">
           <td>{{ user.id }}</td>
           <td>{{ user.username }}</td>
           <td>{{ user.email }}</td>
@@ -39,9 +40,21 @@ export default {
     data() {
         return {
         all_users: [],
+        search: "",
         };
     },
-    
+
+    computed: {
+        filtered_users() {
+            const term = this.search.toLowerCase();
+            return this.all_users.filter(
+                (user) =>
+                    user.username.toLowerCase().includes(term) ||
+                    String(user.id).includes(term)
+            );
+        },
+    },
+
     mounted() {
         this.get_all_users();
     },

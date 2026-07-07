@@ -21,7 +21,7 @@ const routes = [
         component: () => import("../views/Coordinator.vue")
     },
     {
-        path: "/AddTrek",
+        path: "/add_trek",
         component: () => import("../views/AddTrek.vue")
     },
     {
@@ -42,6 +42,18 @@ const routes = [
 {
     path:'/user_managment',
     component:()=>import('../views/UserMangment.vue')
+},
+{
+    path:'/staff_dashboard',
+    component:()=>import('../views/StaffDashboard.vue')
+},
+{
+    path:'/bookings',
+    component:()=>import('../views/Bookings.vue')
+},
+{
+    path:'/statistics',
+    component:()=>import('../views/Statistics.vue')
 }
 ]
 

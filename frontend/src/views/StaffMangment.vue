@@ -3,6 +3,8 @@
   <div class="container">
     <h1>Staff Management</h1>
 
+    <input v-model="search" placeholder="Search staff by name or ID" />
+
     <table border="1">
       <thead>
         <tr>
@@ -14,7 +16,7 @@
       </thead>
 
       <tbody>
-        <tr v-for="staff in staffs" :key="staff.id">
+        <tr v-for="staff in filtered_staffs" :key="staff.id">
           <td>{{ staff.id }}</td>
           <td>{{ staff.username }}</td>
           <td>{{ staff.email }}</td>
@@ -39,7 +41,19 @@ export default {
   data() {
     return {
       staffs: [],
+      search: "",
     };
+  },
+
+  computed: {
+    filtered_staffs() {
+      const term = this.search.toLowerCase();
+      return this.staffs.filter(
+        (staff) =>
+          staff.username.toLowerCase().includes(term) ||
+          String(staff.id).includes(term)
+      );
+    },
   },
 
   mounted() {
