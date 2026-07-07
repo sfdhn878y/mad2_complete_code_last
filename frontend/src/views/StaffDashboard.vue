@@ -1,246 +1,141 @@
 <template>
   <Navbar />
-  <div class="container">
-    <h1>Staff Dashboard</h1>
-    <p>Welcome, {{ staff.username }}!</p>
-    <p>Total assigned treks: {{ my_treks.length }}</p>
+  <div class="page">
+    <p v-if="error" class="error-msg">{{ error }}</p>
 
-    <table v-if="my_treks.length > 0" border="1">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Name</th>
-          <th>Location</th>
-          <th>Duration</th>
-          <th>Slots</th>
-          <th>Trekkers</th>
-          <th>Status</th>
-          <th>State</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
+    <div class="card header-card" v-if="staff">
+      <div>
+        <h1 style="margin:0 0 4px">Welcome, {{ staff.username }}</h1>
+        <p class="note" style="margin:0">{{ staff.email }} &middot; <span class="badge badge-blue">{{ staff.role }}</span></p>
+      </div>
+      <div class="actions">
+        <router-link class="btn btn-gray" to="/staff/view_profile">View Profile</router-link>
+        <router-link
+          v-if="staff.profile_completed"
+          class="btn btn-blue"
+          to="/staff/edit_profile">Edit Profile</router-link>
+        <router-link
+          v-else
+          class="btn btn-primary"
+          to="/staff/complete_profile">Complete Profile</router-link>
+      </div>
+    </div>
 
-      <tbody>
-        <tr v-for="trek in my_treks" :key="trek.id">
-          <td>{{ trek.id }}</td>
-          <td>{{ trek.name }}</td>
-          <td>{{ trek.location }}</td>
-          <td>{{ trek.duration }}</td>
+    <div class="stats-grid">
+      <div class="stat-box"><div class="value">{{ stats.total_conducted ?? 0 }}</div><div class="label">Total Treks Conducted</div></div>
+      <div class="stat-box"><div class="value">{{ stats.current_assigned ?? 0 }}</div><div class="label">Current Assigned Treks</div></div>
+      <div class="stat-box"><div class="value">{{ stats.registered_trekkers ?? 0 }}</div><div class="label">Registered Trekkers</div></div>
+      <div class="stat-box"><div class="value">{{ stats.open_bookings ?? 0 }}</div><div class="label">Open Bookings</div></div>
+    </div>
 
-          <td>
-            <input type="number" v-model="trek.slots" style="width: 60px" />
-            <button @click="updateSlots(trek)">Save</button>
-          </td>
+    <div class="card" style="margin-bottom:20px">
+      <b>Status guide:</b>
+      <span class="note">
+        <b>Booking</b> Open/Closed controls whether users can book.
+        <b>Trek State</b> goes upcoming → ongoing → completed.
+        Slot changes and edits need admin approval before they apply.
+      </span>
+    </div>
 
-          <td>{{ trek.trekkers_count }}</td>
-
-          <td>
-            <select v-model="trek.trek_status" @change="updateStatus(trek)">
-              <option value="Open">Open</option>
-              <option value="Closed">Closed</option>
-            </select>
-          </td>
-
-          <td>
-            <select v-model="trek.trek_state" @change="updateState(trek)">
-              <option value="Upcoming">Upcoming</option>
-              <option value="started">started</option>
-              <option value="ongoing">ongoing</option>
-              <option value="completed">completed</option>
-            </select>
-          </td>
-
-          <td>
-            <button @click="viewParticipants(trek)">View Participants</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-
-    <p v-else>No treks assigned to you yet.</p>
-
-    <div v-if="selected_trek">
-      <h2>Participants for {{ selected_trek.name }}</h2>
-      <table v-if="participants.length > 0" border="1">
+    <h2 style="font-size:18px;margin:0 0 12px">Current Assigned Treks</h2>
+    <div class="table-wrap" style="margin-bottom:28px">
+      <table class="table" v-if="currentTreks.length">
         <thead>
           <tr>
-            <th>User ID</th>
-            <th>Username</th>
-            <th>Email</th>
-            <th>Action</th>
+            <th>Name</th><th>Location</th><th>Expected Time</th><th>Participants</th>
+            <th>Available Slots</th><th>Progress</th><th>Booking</th><th>Trek Status</th><th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="p in participants" :key="p.booking_id">
-            <td>{{ p.user_id }}</td>
-            <td>{{ p.username }}</td>
-            <td>{{ p.email }}</td>
+          <tr v-for="t in currentTreks" :key="t.id">
+            <td>{{ t.name }}</td>
+            <td>{{ t.location }}</td>
+            <td>{{ t.duration || '—' }}</td>
+            <td>{{ t.registered_count }}</td>
+            <td>{{ t.slots - t.registered_count }}</td>
+            <td>{{ t.progress }}%</td>
+            <td><span class="badge" :class="t.trek_status === 'Open' ? 'badge-green' : 'badge-red'">{{ t.trek_status }}</span></td>
+            <td><span class="badge" :class="stateBadge(t.trek_state)">{{ t.trek_state }}</span></td>
             <td>
-              <button @click="removeParticipant(p.booking_id)">Remove</button>
+              <div class="actions">
+                <router-link class="btn btn-blue btn-sm" :to="`/staff/trek/${t.id}`">Open Trek</router-link>
+                <router-link
+                  v-if="!t.pending_approval"
+                  class="btn btn-gray btn-sm"
+                  :to="`/edit_treak/${t.id}`">Edit</router-link>
+                <span v-else class="badge badge-amber">Pending Approval</span>
+              </div>
             </td>
           </tr>
         </tbody>
       </table>
-      <p v-else>No registered users for this trek.</p>
+      <p v-else class="note">No current assigned treks.</p>
+    </div>
+
+    <h2 style="font-size:18px;margin:0 0 12px">Past Completed Treks</h2>
+    <div class="table-wrap">
+      <table class="table" v-if="pastTreks.length">
+        <thead>
+          <tr><th>Name</th><th>Location</th><th>Duration</th><th>Participants</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="t in pastTreks" :key="t.id">
+            <td>{{ t.name }}</td>
+            <td>{{ t.location }}</td>
+            <td>{{ t.duration || '—' }}</td>
+            <td>{{ t.total_bookings }}</td>
+            <td>
+              <router-link class="btn btn-gray btn-sm" :to="`/staff/trek/${t.id}/participants`">View Participants</router-link>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="note">No completed treks yet.</p>
     </div>
   </div>
 </template>
 
 <script>
 import Navbar from "../components/Navbar.vue";
+import { api } from "../api.js";
+
 export default {
-  components: {
-    Navbar
-  },
+  components: { Navbar },
   data() {
-    return {
-      staff: {},
-      my_treks: [],
-      participants: [],
-      selected_trek: null
-    };
+    return { staff: null, stats: {}, treks: [], error: "" };
   },
-
+  computed: {
+    currentTreks() {
+      return this.treks.filter((t) => t.trek_state !== "completed");
+    },
+    pastTreks() {
+      return this.treks.filter((t) => t.trek_state === "completed");
+    },
+  },
   mounted() {
-    this.staff = JSON.parse(localStorage.getItem("user"));
-    this.get_my_treks();
+    this.load();
   },
-
   methods: {
-    async get_my_treks() {
+    stateBadge(state) {
+      if (state === "completed") return "badge-gray";
+      if (state === "ongoing") return "badge-blue";
+      return "badge-amber";
+    },
+    async load() {
+      const user = JSON.parse(window.localStorage.getItem("user") || "null");
+      if (!user) {
+        this.error = "Please log in as staff.";
+        return;
+      }
       try {
-        const response = await fetch(`http://127.0.0.1:5000/coordinator_treks/${this.staff.id}`);
-        if (response.ok) {
-          this.my_treks = await response.json();
-        }
-      } catch (error) {
-        console.error("Error fetching treks:", error);
+        const data = await api.get(`/staff/overview/${user.id}`);
+        this.staff = data.staff;
+        this.stats = data.stats;
+        this.treks = data.treks;
+      } catch (e) {
+        this.error = e.message;
       }
     },
-
-    async updateSlots(trek) {
-      try {
-        const response = await fetch("http://127.0.0.1:5000/update_slots", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            trek_id: trek.id,
-            coordinator_id: this.staff.id,
-            slots: trek.slots
-          })
-        });
-        const data = await response.json();
-        if (response.ok) {
-          alert(data.message);
-        } else {
-          alert(data.error);
-        }
-      } catch (error) {
-        console.error("Error updating slots:", error);
-      }
-    },
-
-    async updateStatus(trek) {
-      try {
-        const response = await fetch("http://127.0.0.1:5000/update_trek_status", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            trek_id: trek.id,
-            coordinator_id: this.staff.id,
-            trek_status: trek.trek_status
-          })
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          alert(data.error);
-        }
-      } catch (error) {
-        console.error("Error updating status:", error);
-      }
-    },
-
-    async updateState(trek) {
-      try {
-        const response = await fetch("http://127.0.0.1:5000/update_trek_state", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            trek_id: trek.id,
-            coordinator_id: this.staff.id,
-            trek_state: trek.trek_state
-          })
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          alert(data.error);
-        }
-      } catch (error) {
-        console.error("Error updating state:", error);
-      }
-    },
-
-    async viewParticipants(trek) {
-      try {
-        const response = await fetch(`http://127.0.0.1:5000/trek_participants/${trek.id}`);
-        if (response.ok) {
-          this.participants = await response.json();
-          this.selected_trek = trek;
-        }
-      } catch (error) {
-        console.error("Error fetching participants:", error);
-      }
-    },
-
-    async removeParticipant(bookingId) {
-      try {
-        const response = await fetch("http://127.0.0.1:5000/remove_participant", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            booking_id: bookingId,
-            coordinator_id: this.staff.id
-          })
-        });
-        const data = await response.json();
-        if (response.ok) {
-          this.viewParticipants(this.selected_trek);
-          this.get_my_treks();
-        } else {
-          alert(data.error);
-        }
-      } catch (error) {
-        console.error("Error removing participant:", error);
-      }
-    }
-  }
+  },
 };
 </script>
-
-<style scoped>
-.container {
-  padding: 20px;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 20px;
-}
-
-th,
-td {
-  border: 1px solid #ddd;
-  padding: 10px;
-  text-align: center;
-}
-
-th {
-  background-color: #2c3e50;
-  color: white;
-}
-
-tr:nth-child(even) {
-  background-color: #f2f2f2;
-}
-</style>

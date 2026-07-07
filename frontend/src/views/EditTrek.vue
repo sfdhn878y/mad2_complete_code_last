@@ -1,19 +1,18 @@
 <template>
   <Navbar />
   <div class="page">
-    <h1>Add Trek</h1>
-    <p class="note">The trek will be created as <b>Open</b> for booking and in the <b>upcoming</b> state.</p>
+    <h1>Edit Trek</h1>
 
     <div class="card" style="margin-top:16px">
       <p v-if="error" class="error-msg">{{ error }}</p>
       <div class="form-grid">
         <div class="form-field">
           <label>Trek Name</label>
-          <input class="input" v-model="form.name" placeholder="e.g. Roopkund Trek" />
+          <input class="input" v-model="form.name" />
         </div>
         <div class="form-field">
           <label>Location</label>
-          <input class="input" v-model="form.location" placeholder="e.g. Uttarakhand" />
+          <input class="input" v-model="form.location" />
         </div>
         <div class="form-field">
           <label>Difficulty</label>
@@ -25,7 +24,7 @@
         </div>
         <div class="form-field">
           <label>Duration</label>
-          <input class="input" v-model="form.duration" placeholder="e.g. 8 days" />
+          <input class="input" v-model="form.duration" />
         </div>
         <div class="form-field">
           <label>Start Date</label>
@@ -36,11 +35,11 @@
           <input class="input" type="date" v-model="form.end_date" />
         </div>
         <div class="form-field">
-          <label>Available Slots</label>
+          <label>Slots</label>
           <input class="input" type="number" min="0" v-model.number="form.slots" />
         </div>
         <div class="form-field">
-          <label>Assign Trek Staff</label>
+          <label>Assigned Staff</label>
           <select class="input" v-model="form.coordinator_id">
             <option value="">Select staff</option>
             <option v-for="s in staff" :key="s.id" :value="s.id">{{ s.username }}</option>
@@ -48,8 +47,8 @@
         </div>
       </div>
       <div style="margin-top:18px" class="actions">
-        <button class="btn btn-primary" @click="submit">Add Trek</button>
-        <router-link class="btn btn-gray" to="/admin">Cancel</router-link>
+        <button class="btn btn-primary" @click="submit">Save Changes</button>
+        <router-link class="btn btn-gray" to="/manage_treks">Back to Manage Treks</router-link>
       </div>
     </div>
   </div>
@@ -72,24 +71,31 @@ export default {
     };
   },
   mounted() {
-    this.loadStaff();
+    this.load();
   },
   methods: {
-    async loadStaff() {
+    async load() {
       try {
         this.staff = await api.get("/all_staff");
+        const t = await api.get(`/admin/trek_details/${this.$route.params.id}`);
+        this.form = {
+          name: t.name || "",
+          location: t.location || "",
+          difficulty: t.difficulty || "Easy",
+          duration: t.duration || "",
+          start_date: t.start_date || "",
+          end_date: t.end_date || "",
+          slots: t.slots || 0,
+          coordinator_id: t.coordinator_id || "",
+        };
       } catch (e) {
         this.error = e.message;
       }
     },
     async submit() {
       this.error = "";
-      if (!this.form.name || !this.form.location) {
-        this.error = "Trek name and location are required";
-        return;
-      }
       try {
-        await api.post("/add_treks", {
+        await api.put(`/admin/edit_trek/${this.$route.params.id}`, {
           ...this.form,
           coordinator_id: this.form.coordinator_id || null,
         });

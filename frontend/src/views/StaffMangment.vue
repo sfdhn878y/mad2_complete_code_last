@@ -1,135 +1,85 @@
 <template>
   <Navbar />
-  <div class="container">
-    <h1>Staff Management</h1>
+  <div class="page">
+    <div class="header-card card">
+      <h1 style="margin:0">Manage Staff</h1>
+      <router-link class="btn btn-primary" to="/add_staff">+ Add Staff</router-link>
+    </div>
 
-    <input v-model="search" placeholder="Search staff by name or ID" />
+    <input class="input search-bar" v-model="search" placeholder="Search by name, email or ID" />
+    <p v-if="error" class="error-msg">{{ error }}</p>
 
-    <table border="1">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Username</th>
-          <th>Email</th>
-          <th>Verified</th>
-        </tr>
-      </thead>
-
-      <tbody>
-        <tr v-for="staff in filtered_staffs" :key="staff.id">
-          <td>{{ staff.id }}</td>
-          <td>{{ staff.username }}</td>
-          <td>{{ staff.email }}</td>
-           <button
-          :class="staff.status === 'Active' ? 'blacklist-btn' : 'unblacklist-btn'"
-          @click="toggleStatus(staff)"
-        >
-          {{ staff.status === "Active" ? "Blacklist" : "Unblacklist" }}
-        </button>
-        </tr>
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table class="table" v-if="filtered.length">
+        <thead>
+          <tr><th>ID</th><th>Username</th><th>Email</th><th>Status</th><th>Profile</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="s in filtered" :key="s.id">
+            <td>{{ s.id }}</td>
+            <td>{{ s.username }}</td>
+            <td>{{ s.email }}</td>
+            <td><span class="badge" :class="statusBadge(s.status)">{{ s.status }}</span></td>
+            <td>
+              <router-link class="btn btn-gray btn-sm" :to="`/staff_profile/${s.id}`">View Profile</router-link>
+            </td>
+            <td>
+              <div class="actions">
+                <button v-if="s.status !== 'Approved'" class="btn btn-primary btn-sm" @click="setStatus(s, 'Approved')">Approve</button>
+                <button v-if="s.status !== 'Blacklisted'" class="btn btn-amber btn-sm" @click="setStatus(s, 'Blacklisted')">Blacklist</button>
+                <button class="btn btn-red btn-sm" @click="remove(s)">Remove</button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="note">No staff found.</p>
+    </div>
   </div>
 </template>
 
 <script>
 import Navbar from "../components/Navbar.vue";
-export default {
-  components: {
-    Navbar
-  },
-  data() {
-    return {
-      staffs: [],
-      search: "",
-    };
-  },
+import { api } from "../api.js";
 
+export default {
+  components: { Navbar },
+  data() {
+    return { staff: [], search: "", error: "" };
+  },
   computed: {
-    filtered_staffs() {
-      const term = this.search.toLowerCase();
-      return this.staffs.filter(
-        (staff) =>
-          staff.username.toLowerCase().includes(term) ||
-          String(staff.id).includes(term)
+    filtered() {
+      const term = this.search.trim().toLowerCase();
+      if (!term) return this.staff;
+      return this.staff.filter(
+        (s) => s.username.toLowerCase().includes(term) ||
+               s.email.toLowerCase().includes(term) ||
+               String(s.id).includes(term)
       );
     },
   },
-
   mounted() {
-    this.loadStaff();
+    this.load();
   },
-
   methods: {
-    async loadStaff() {
-      try {
-        const response = await fetch("http://127.0.0.1:5000/staff");
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch staff.");
-        }
-
-        this.staffs = await response.json();
-      } catch (error) {
-        console.error("Error:", error);
-      }
+    statusBadge(status) {
+      if (status === "Approved") return "badge-green";
+      if (status === "Blacklisted") return "badge-red";
+      return "badge-amber";
     },
-async toggleStatus(staff) {
-  const newStatus =
-    staff.status === "Active" ? "Blacklisted" : "Active";
-
-  try {
-    const response = await fetch("http://127.0.0.1:5000/staff/status", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        id: staff.id,
-        status: newStatus,
-      }),
-    });
-
-    const result = await response.json();
-
-    if (response.ok) {
-      staff.status = newStatus;
-      console.log(result.message);
-    } else {
-      alert(result.error);
-    }
-  } catch (error) {
-    console.error(error);
-  }
-}  
-},
-  
+    async load() {
+      try { this.staff = await api.get("/all_staff"); }
+      catch (e) { this.error = e.message; }
+    },
+    async setStatus(s, status) {
+      try { await api.post("/staff/status", { id: s.id, status }); this.load(); }
+      catch (e) { alert(e.message); }
+    },
+    async remove(s) {
+      if (!confirm(`Permanently remove staff "${s.username}"?`)) return;
+      try { await api.del(`/staff/remove/${s.id}`); this.load(); }
+      catch (e) { alert(e.message); }
+    },
+  },
 };
 </script>
-
-<style scoped>
-.container {
-  padding: 20px;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-th,
-td {
-  border: 1px solid #ddd;
-  padding: 10px;
-  text-align: center;
-}
-
-th {
-  background-color: #2c3e50;
-  color: white;
-}
-
-tr:nth-child(even) {
-  background-color: #f2f2f2;
-}
-</style>
