@@ -8,8 +8,12 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, date
 from functools import wraps
 import json
+from flask_caching import Cache
 from sqlalchemy import text
-
+from datetime import datetime, date, timedelta   # add timedelta
+from flask_mail import Mail, Message
+from celery import Celery
+from celery.schedules import crontab
 app = Flask(__name__)
 
 # allow requests from vue app
@@ -24,7 +28,71 @@ db = SQLAlchemy(app)
 app.config["JWT_SECRET_KEY"] = "your-secret-key"   # Change this
 jwt = JWTManager(app)
 
+# ---------------------------------------------------------------------------
+# Redis cache setup (Flask-Caching)
+# ---------------------------------------------------------------------------
+# Uses Redis as the backend, running on localhost:6379.
+# GET routes use @cache.cached(timeout=60) to store their response for 60s.
+app.config["CACHE_TYPE"] = "RedisCache"
+app.config["CACHE_REDIS_HOST"] = "localhost"
+app.config["CACHE_REDIS_PORT"] = 6379
+app.config["CACHE_REDIS_DB"] = 0
+app.config["CACHE_DEFAULT_TIMEOUT"] = 60   # default expiry in seconds
 
+cache = Cache(app)
+
+# ---------------------------------------------------------------------------
+# Flask-Mail (for reminders, reports, export notifications)
+# ---------------------------------------------------------------------------
+app.config["MAIL_SERVER"] = "smtp.gmail.com"
+app.config["MAIL_PORT"] = 587
+app.config["MAIL_USE_TLS"] = True
+app.config["MAIL_USERNAME"] = "tempmailshubham4@gmail.com"      # change this
+app.config["MAIL_PASSWORD"] = "zjta adlj abdp tjrr" # NOT normal password
+app.config["MAIL_DEFAULT_SENDER"] = "tempmailshubham4@gmail.com"
+
+mail = Mail(app)
+# After any create/update/delete we clear the whole cache so users never
+# see stale data. cache.clear() is the simplest, beginner-friendly choice.
+# ---------------------------------------------------------------------------
+# Flask-Mail (for reminders, reports, export notifications)
+# ---------------------------------------------------------------------------
+
+
+def clear_cache():
+    cache.clear()
+from datetime import timedelta
+
+# ---------------------------------------------------------------------------
+# Celery + Redis (background jobs + daily schedule)
+# ---------------------------------------------------------------------------
+def make_celery(flask_app):
+    celery_app = Celery(
+        flask_app.import_name,
+        broker="redis://localhost:6379/1",
+        backend="redis://localhost:6379/1",
+    )
+    celery_app.conf.update(
+        timezone="Asia/Kolkata",
+        enable_utc=True,
+        beat_schedule={
+            "daily-trek-reminder": {
+                "task": "send_trek_reminders",
+                "schedule": timedelta(seconds=10)
+            },
+        },
+    )
+
+    class ContextTask(celery_app.Task):
+        def __call__(self, *args, **kwargs):
+            with flask_app.app_context():
+                return self.run(*args, **kwargs)
+
+    celery_app.Task = ContextTask
+    return celery_app
+
+
+celery = make_celery(app)
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
@@ -69,7 +137,36 @@ def role_required(*roles):
         return decorated
     return wrapper
 
+@celery.task(name="send_trek_reminders")
+def send_trek_reminders():
+    """Send email to users whose booked trek starts tomorrow."""
+    tomorrow = date.today() + timedelta(days=1)
 
+    treks = treaking_table.query.filter(
+       
+        treaking_table.trek_state == "upcoming"
+    ).all()
+
+    sent = 0
+    for trek in treks:
+        for b in active_bookings(trek):
+            user = b.user
+            msg = Message(
+                subject=f"Reminder: {trek.name} starts tomorrow!",
+                recipients=[user.email],
+                body=(
+                    f"Hi {user.full_name or user.username},\n\n"
+                    f"Your trek \"{trek.name}\" at {trek.location} "
+                    f"starts on {trek.start_date}.\n\n"
+                    f"Difficulty: {trek.difficulty}\n"
+                    f"Duration: {trek.duration}\n\n"
+                    f"See you on the trail!\n"
+                ),
+            )
+            mail.send(msg)
+            sent += 1
+
+    return f"Sent {sent} reminder(s)"
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -235,6 +332,7 @@ def register():
                     role="user", status="Active")
     db.session.add(new_user)
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "User registration successfully completed"}), 201
 
 
@@ -270,8 +368,11 @@ def login():
 # Admin: stats
 # ---------------------------------------------------------------------------
 @app.route("/stats", methods=["GET"])
+@cache.cached(timeout=60)  # cached for 60 seconds
 @role_required("admin")
 def stats():
+    print("stats called")
+   
     return jsonify({
         "total_treks": treaking_table.query.count(),
         "total_users": User.query.filter_by(role="user").count(),
@@ -285,6 +386,7 @@ def stats():
 # ---------------------------------------------------------------------------
 @app.route("/all_treks", methods=["GET"])
 @role_required("admin")
+@cache.cached(timeout=60)  # cached for 60 seconds
 def all_treks():
     treks = treaking_table.query.all()
     return jsonify([serialize_trek(t) for t in treks])
@@ -339,6 +441,7 @@ def add_treks():
     )
     db.session.add(new_trek)
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Trek added successfully"}), 201
 
 
@@ -369,6 +472,7 @@ def edit_trek(trek_id):
         trek.slots = data.get("slots")
     trek.coordinator_id = coordinator_id
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Trek updated successfully"})
 
 
@@ -380,6 +484,7 @@ def delete_trek(trek_id):
         return jsonify({"error": "Trek not found"}), 404
     db.session.delete(trek)
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Trek deleted successfully"}), 200
 
 
@@ -391,6 +496,7 @@ def toggle_booking(trek_id):
         return jsonify({"error": "Trek not found"}), 404
     trek.trek_status = "Closed" if trek.trek_status == "Open" else "Open"
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Booking status updated", "trek_status": trek.trek_status})
 
 
@@ -425,6 +531,7 @@ def approve_change(trek_id):
     trek.pending_changes = None
     trek.pending_approval = False
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Change approved"})
 
 
@@ -438,6 +545,7 @@ def reject_change(trek_id):
     trek.pending_changes = None
     trek.pending_approval = False
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Change rejected"})
 
 
@@ -450,6 +558,7 @@ def assign_staff():
         return jsonify({"error": "Trek not found"}), 404
     trek.coordinator_id = data.get("coordinator_id") or None
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Staff assigned successfully"})
 
 
@@ -481,6 +590,7 @@ def view_participants(trek_id):
 # ---------------------------------------------------------------------------
 @app.route("/all_staff", methods=["GET"])
 @role_required("admin")
+@cache.cached(timeout=60)  # cached for 60 seconds
 def all_staff():
     staff_members = User.query.filter_by(role="staff").all()
     return jsonify([{
@@ -514,6 +624,7 @@ def add_staff():
                     role="staff", status="Approved")
     db.session.add(new_user)
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Staff added successfully"}), 201
 
 
@@ -526,6 +637,7 @@ def update_staff_status():
         return jsonify({"error": "Staff not found"}), 404
     staff.status = data["status"]
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Status updated successfully"})
 
 
@@ -540,6 +652,7 @@ def remove_staff(staff_id):
         trek.coordinator_id = None
     db.session.delete(staff)
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Staff removed successfully"})
 
 
@@ -571,7 +684,9 @@ def staff_profile(user_id):
 # ---------------------------------------------------------------------------
 @app.route("/all_users", methods=["GET"])
 @role_required("admin")
+@cache.cached(timeout=60)  # cached for 60 seconds
 def all_users():
+    
     users = User.query.filter_by(role="user").all()
     return jsonify([{
         "id": u.id,
@@ -591,6 +706,7 @@ def update_user_status():
         return jsonify({"error": "User not found"}), 404
     user.status = data["status"]
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Status updated successfully"})
 
 
@@ -617,6 +733,7 @@ def admin_user_profile(user_id):
 # ---------------------------------------------------------------------------
 @app.route("/all_bookings", methods=["GET"])
 @role_required("admin")
+@cache.cached(timeout=60)  # cached for 60 seconds
 def all_bookings():
     bookings = booking.query.all()
     return jsonify([{
@@ -718,6 +835,7 @@ def request_slot_change():
     trek.pending_slots = new_slots
     trek.pending_approval = True
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Slot change requested, awaiting admin approval"})
 
 
@@ -732,6 +850,7 @@ def staff_toggle_booking():
         return jsonify({"error": "Not authorized for this trek"}), 403
     trek.trek_status = "Closed" if trek.trek_status == "Open" else "Open"
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Booking status updated", "trek_status": trek.trek_status})
 
 
@@ -757,6 +876,7 @@ def staff_update_state():
             if b.status == "Booked":
                 b.status = "Completed"
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Trek state updated"})
 
 
@@ -788,6 +908,7 @@ def staff_edit_trek():
     trek.pending_changes = json.dumps(changes)
     trek.pending_approval = True
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Edit submitted, awaiting admin approval"})
 
 
@@ -843,6 +964,7 @@ def save_profile(user_id):
     user.fitness_level = data.get("fitness_level", user.fitness_level)
     user.profile_completed = True
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Profile saved successfully"})
 
 
@@ -900,6 +1022,7 @@ def user_bookings(user_id):
 
 @app.route("/user/treks/<int:user_id>", methods=["GET"])
 @role_required("user")
+@cache.cached(timeout=60)  # cached per user (URL includes user_id)
 def user_treks(user_id):
     if current_user().id != user_id:
         return jsonify({"error": "You can only view your own treks"}), 403
@@ -943,6 +1066,7 @@ def book_trek():
 
     db.session.add(booking(user_id=user.id, treaking_table_id=trek.id, status="Booked"))
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Trek booked successfully"}), 201
 
 
@@ -959,6 +1083,7 @@ def cancel_booking():
         return jsonify({"error": "Only active bookings can be cancelled"}), 400
     book.status = "Cancelled"
     db.session.commit()
+    clear_cache()   # remove old cached data
     return jsonify({"message": "Booking cancelled successfully"})
 
 
