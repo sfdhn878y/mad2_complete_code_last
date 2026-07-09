@@ -15,12 +15,16 @@ from flask_mail import Mail, Message
 from celery import Celery
 from celery.schedules import crontab
 app = Flask(__name__)
-
+from sqlalchemy import func
 # allow requests from vue app
 CORS(app)
+import os
+basedir = os.path.abspath(os.path.dirname(__file__))
 
 # sqlite database
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///todos.db"
+app.config["SQLALCHEMY_DATABASE_URI"] = (
+    "sqlite:///" + os.path.join(basedir, "instance", "todos.db")
+)
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
@@ -78,6 +82,10 @@ def make_celery(flask_app):
         beat_schedule={
             "daily-trek-reminder": {
                 "task": "send_trek_reminders",
+                "schedule": timedelta(seconds=10)
+            },
+            "monthly-admin-report": {
+                "task": "send_monthly_admin_report",
                 "schedule": timedelta(seconds=10)
             },
         },
@@ -167,6 +175,111 @@ def send_trek_reminders():
             sent += 1
 
     return f"Sent {sent} reminder(s)"
+
+
+
+
+
+
+#-------------------__
+# send month reprot 
+@celery.task(name="send_monthly_admin_report")
+def send_monthly_admin_report():
+    """Email admins a monthly trekking activity report for the previous calendar month."""
+    today = date.today()
+    first_of_this_month = today.replace(day=1)
+    last_month_end = first_of_this_month - timedelta(days=1)
+    last_month_start = last_month_end.replace(day=1)
+    month_label = last_month_start.strftime("%B %Y")  # e.g. "June 2026"
+
+    # Treks conducted last month
+    conducted = treaking_table.query.filter(
+        treaking_table.trek_state == "completed",
+        treaking_table.end_date >= last_month_start,
+        treaking_table.end_date <= last_month_end,
+    ).all()
+
+    # Total participants on those treks
+    participants = (
+        booking.query
+        .join(treaking_table, booking.treaking_table_id == treaking_table.id)
+        .filter(
+            booking.status.in_(["Completed", "Booked"]),
+            treaking_table.trek_state == "completed",
+            treaking_table.end_date >= last_month_start,
+            treaking_table.end_date <= last_month_end,
+        )
+        .count()
+    )
+
+    # Top 5 popular treks by booking count
+    popular = (
+        db.session.query(
+            treaking_table.name,
+            func.count(booking.id).label("count"),
+        )
+        .join(booking, booking.treaking_table_id == treaking_table.id)
+        .filter(
+            treaking_table.trek_state == "completed",
+            treaking_table.end_date >= last_month_start,
+            treaking_table.end_date <= last_month_end,
+            booking.status.in_(["Completed", "Booked"]),
+        )
+        .group_by(treaking_table.id)
+        .order_by(func.count(booking.id).desc())
+        .limit(5)
+        .all()
+    )
+
+    # Build popular treks HTML list
+    if popular:
+        popular_html = "".join(
+            f"<li>{name} — {count} participant(s)</li>"
+            for name, count in popular
+        )
+    else:
+        popular_html = "<li>No treks completed last month</li>"
+
+    # Trek names list
+    conducted_names = ", ".join(t.name for t in conducted) if conducted else "None"
+
+    html_body = f"""
+    <h2>Monthly Trekking Activity Report — {month_label}</h2>
+    <p>Summary for <strong>{month_label}</strong>:</p>
+    <ul>
+        <li><strong>Treks conducted:</strong> {len(conducted)}</li>
+        <li><strong>Total participants:</strong> {participants}</li>
+        <li><strong>Treks:</strong> {conducted_names}</li>
+    </ul>
+    <h3>Popular treks</h3>
+    <ul>{popular_html}</ul>
+    <p>— Trekking Admin System</p>
+    """
+
+    admins = User.query.filter_by(role="admin").all()
+    print(admins)
+    if not admins:
+        return "No admin users found"
+
+    sent = 0
+    for admin in admins:
+        if not admin.email or admin.email == "admin":
+            print('invalid admin email')
+            continue  # skip invalid seed admin email
+        msg = Message(
+            subject=f"Monthly Trekking Report — {month_label}",
+            recipients=[admin.email],
+            html=html_body,
+        )
+        mail.send(msg)
+        sent += 1
+
+    return f"Monthly report sent to {sent} admin(s) for {month_label}"
+
+
+
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -1115,7 +1228,7 @@ if __name__ == "__main__":
         db.create_all()
         run_migrations()
         if not User.query.filter_by(username="admin").first():
-            admin = User(username="admin", email="admin", password=hash_password("admin"),
+            admin = User(username="admin", email="admin@gmail.com", password=hash_password("admin"),
                          role="admin", status="Active")
             db.session.add(admin)
             db.session.commit()
