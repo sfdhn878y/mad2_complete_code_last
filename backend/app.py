@@ -20,7 +20,10 @@ from sqlalchemy import func
 CORS(app)
 import os
 basedir = os.path.abspath(os.path.dirname(__file__))
-
+import csv
+from flask import Flask, request, jsonify, send_from_directory
+EXPORT_DIR = os.path.join(basedir, "instance", "exports")
+os.makedirs(EXPORT_DIR, exist_ok=True)
 # sqlite database
 app.config["SQLALCHEMY_DATABASE_URI"] = (
     "sqlite:///" + os.path.join(basedir, "instance", "todos.db")
@@ -82,11 +85,11 @@ def make_celery(flask_app):
         beat_schedule={
             "daily-trek-reminder": {
                 "task": "send_trek_reminders",
-                "schedule": timedelta(seconds=10)
+                "schedule": timedelta(seconds=100)
             },
             "monthly-admin-report": {
                 "task": "send_monthly_admin_report",
-                "schedule": timedelta(seconds=10)
+                "schedule": timedelta(seconds=100)
             },
         },
     )
@@ -353,7 +356,15 @@ class booking(db.Model):
     booked_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     user = db.relationship('User', backref='bookings')
+class ExportJob(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    status = db.Column(db.String(20), default="pending")  # pending | done | failed
+    filename = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime, nullable=True)
 
+    user = db.relationship('User', backref='export_jobs')
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -421,8 +432,119 @@ def validate_trek_payload(name, start_date, end_date, coordinator_id, exclude_id
             if dates_overlap(start_date, end_date, other.start_date, other.end_date):
                 return f"Assigned staff already leads '{other.name}' during these dates"
     return None
+@celery.task(name="export_user_history")
+def export_user_history(user_id, job_id):
+    """Generate CSV of user's trekking history and email download link."""
+    job = ExportJob.query.get(job_id)
+    user = User.query.get(user_id)
+
+    if not user or not job:
+        return "User or job not found"
+
+    try:
+        bookings = (
+            booking.query
+            .filter_by(user_id=user_id)
+            .order_by(booking.booked_at.desc())
+            .all()
+        )
+
+        filename = f"trek_history_{user_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+        filepath = os.path.join(EXPORT_DIR, filename)
+
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "Booking ID", "Trek Name", "Location", "Difficulty", "Duration",
+                "Booked At", "Booking Status", "Trek Booking Status", "Trek State",
+                "Coordinator",
+            ])
+            for b in bookings:
+                t = b.trek
+                writer.writerow([
+                    b.id,
+                    t.name,
+                    t.location,
+                    t.difficulty,
+                    t.duration,
+                    b.booked_at.isoformat() if b.booked_at else "",
+                    b.status,
+                    t.trek_status,
+                    t.trek_state,
+                    t.coordinator.username if t.coordinator else "",
+                ])
+
+        job.status = "done"
+        job.filename = filename
+        job.completed_at = datetime.utcnow()
+        db.session.commit()
+
+      
+        return f"Export done: {filename}"
+
+    except Exception as e:
+        job.status = "failed"
+        db.session.commit()
+        raise e
+@app.route("/user/export-history", methods=["POST"])
+@role_required("user")
+def trigger_export():
+    user = current_user()
+
+    pending = ExportJob.query.filter_by(user_id=user.id, status="pending").first()
+    if pending:
+        return jsonify({
+            "message": "Export already in progress",
+            "job_id": pending.id,
+            "status": pending.status,
+        }), 202
+
+    job = ExportJob(user_id=user.id, status="pending")
+    db.session.add(job)
+    db.session.commit()
+
+    export_user_history.delay(user.id, job.id)
+
+    return jsonify({
+        "message": "Export started. You will receive an email when it is ready.",
+        "job_id": job.id,
+        "status": job.status,
+    }), 202
 
 
+@app.route("/user/export-status/<int:job_id>", methods=["GET"])
+@role_required("user")
+def export_status(job_id):
+    job = ExportJob.query.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    if job.user_id != current_user().id:
+        return jsonify({"error": "Forbidden"}), 403
+
+    data = {
+        "job_id": job.id,
+        "status": job.status,
+        "filename": job.filename,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+    }
+    if job.status == "done" and job.filename:
+        data["download_url"] = f"http://127.0.0.1:5000/exports/{job.filename}"
+    return jsonify(data)
+
+
+@app.route("/exports/<filename>", methods=["GET"])
+@jwt_required()
+def download_export(filename):
+    user = current_user()
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # only allow downloading your own export files
+    if not filename.startswith(f"trek_history_{user.id}_"):
+        return jsonify({"error": "Forbidden"}), 403
+
+    return send_from_directory(EXPORT_DIR, filename, as_attachment=True)
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------

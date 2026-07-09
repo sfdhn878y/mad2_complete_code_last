@@ -3,6 +3,11 @@
   <div class="page">
     <h1>Trekking History</h1>
     <p class="note">All your bookings — booked, completed, and cancelled.</p>
+
+    <button class="btn" @click="exportCsv" :disabled="exporting">
+      {{ exporting ? "Exporting..." : "Export CSV" }}
+    </button>
+    <p v-if="exportMsg" class="note">{{ exportMsg }}</p>
     <p v-if="error" class="error-msg">{{ error }}</p>
 
     <div class="table-wrap">
@@ -29,7 +34,6 @@
     </div>
   </div>
 </template>
-
 <script>
 import Navbar from "../components/Navbar.vue";
 import { api } from "../api.js";
@@ -37,12 +41,58 @@ import { api } from "../api.js";
 export default {
   components: { Navbar },
   data() {
-    return { bookings: [], error: "" };
+    return { bookings: [], error: "" ,exporting: false, exportMsg: "" };
   },
   mounted() {
     this.load();
   },
   methods: {
+ async exportCsv() {
+  const u = JSON.parse(window.localStorage.getItem("user") || "null");
+  if (!u) {
+    this.error = "Please log in.";
+    return;
+  }
+  this.exporting = true;
+  this.exportMsg = "";
+  this.error = "";
+  try {
+    const res = await api.post("/user/export-history");
+    this.exportMsg = "Export started...";
+    const jobId = res.job_id;
+
+    let status;
+    while (true) {
+      await new Promise((r) => setTimeout(r, 2000));
+      status = await api.get(`/user/export-status/${jobId}`);
+      if (status.status === "done") break;
+      if (status.status === "failed") throw new Error("Export failed");
+    }
+
+    this.exportMsg = "Export ready! Downloading...";
+
+    const token = window.localStorage.getItem("token");
+    const downloadRes = await fetch(
+      `http://127.0.0.1:5000/exports/${status.filename}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!downloadRes.ok) throw new Error("Download failed");
+
+    const blob = await downloadRes.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = status.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    this.exportMsg = "Export downloaded!";
+  } catch (e) {
+    this.error = e.message;
+  } finally {
+    this.exporting = false;
+  }
+},
     formatDate(v) {
       return v ? new Date(v).toLocaleDateString() : "—";
     },
